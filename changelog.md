@@ -80,3 +80,8 @@
 * 3.4.0
   * Add `prefetch_bytes' consumer config. `brod_consumer' should stop fetch-ahead only when
     both `prefetch_count' and `prefetch_bytes' limits are exceeded
+* 3.5.0
+  * Moved modules to `kafka_protocol':
+    - brod_sock -> kpro_connection
+    - brod_auth_backed -> kpro_auth_backend
+    - brod_kafka_requests -> kpro_sent_reqs

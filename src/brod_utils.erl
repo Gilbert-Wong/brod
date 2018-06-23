@@ -23,7 +23,6 @@
         , assert_topic/1
         , bytes/1
         , connect_group_coordinator/3
-        , decode_messages/2
         , describe_groups/3
         , epoch_ms/0
         , fetch/8
@@ -31,6 +30,7 @@
         , fetch_committed_offsets/4
         , find_leader_in_metadata/3
         , find_struct/3
+        , flatten_batches/2
         , get_metadata/1
         , get_metadata/2
         , get_metadata/3
@@ -91,8 +91,8 @@ get_metadata(Hosts, Topics, Options) ->
   with_sock(
     try_connect(Hosts, Options),
     fun(Pid) ->
-      Request = brod_kafka_request:metadata_request(Pid, Topics),
-      #kpro_rsp{ tag = metadata_response
+      Request = brod_kafka_request:metadata(Pid, Topics),
+      #kpro_rsp{ api = metadata
                , msg = Msg
                } = request_sync(Pid, Request),
       {ok, Msg}
@@ -113,8 +113,8 @@ resolve_offset(Hosts, Topic, Partition, Time, Options) when is_list(Options) ->
 -spec resolve_offset(pid(), topic(), partition(), offset_time()) ->
         {ok, offset()} | {error, any()}.
 resolve_offset(Pid, Topic, Partition, Time) ->
-  Request = brod_kafka_request:offsets_request(Pid, Topic, Partition, Time),
-  #kpro_rsp{tag = offsets_response
+  Request = brod_kafka_request:list_offsets(Pid, Topic, Partition, Time),
+  #kpro_rsp{ api = list_offsets
            , vsn = Vsn
            , msg = Msg
            } = request_sync(Pid, Request),
@@ -221,19 +221,11 @@ assert_topic(Topic) ->
   ok_when(is_binary(Topic) andalso size(Topic) > 0,
           {bad_topic, Topic}).
 
-%% @doc Map message to brod's format.
-%% incomplete message indicator is kept when the only one message is incomplete.
-%% Messages having offset earlier than the requested offset are discarded.
-%% this might happen for compressed message sets
-%% @end
--spec decode_messages(offset(), kpro:incomplete_message() | [brod:message()]) ->
-        kpro:incomplete_message() | [brod:message()].
-decode_messages(BeginOffset, Messages) when is_binary(Messages) ->
-  decode_messages(BeginOffset, kpro:decode_message_set(Messages));
-decode_messages(_BeginOffset, ?incomplete_message(_) = Incomplete) ->
-  Incomplete;
-decode_messages(BeginOffset, Messages) when is_list(Messages) ->
-  drop_old_messages(BeginOffset, Messages).
+%% @doc Make a flat message list from decoded batch list.
+-spec flatten_batches(offset(), [kpro:batch()]) -> [kpro:message()].
+flatten_batches(BeginOffset, Batches) ->
+  MsgList = lists:append([Msgs || {_Meta, Msgs} <- Batches]),
+  drop_old_messages(BeginOffset, MsgList).
 
 %% @doc Fetch a single message set from the given topic-partition.
 -spec fetch([endpoint()], topic(), partition(), offset(),
@@ -319,9 +311,9 @@ fetch_committed_offsets(Client, GroupId, Topics) ->
                                  group_id(), [topic()]) ->
         {ok, [kpro:struct()]} | {error, any()}.
 do_fetch_committed_offsets(SockPid, GroupId, Topics) when is_pid(SockPid) ->
-  Req = brod_kafka_request:offset_fetch_request(SockPid, GroupId, Topics),
+  Req = brod_kafka_request:offset_fetch(SockPid, GroupId, Topics),
   try
-    #kpro_rsp{ tag = offset_fetch_response
+    #kpro_rsp{ api = offset_fetch
              , msg = Msg
              } = request_sync(SockPid, Req),
     TopicsArray = kf(responses, Msg),
@@ -339,40 +331,27 @@ do_fetch_committed_offsets(SockPid, GroupId, Topics) when is_pid(SockPid) ->
                    kpro:wait(), kpro:count()) -> req_fun().
 make_req_fun(SockPid, Topic, Partition, WaitTime, MinBytes) ->
   fun(Offset, MaxBytes) ->
-      brod_kafka_request:fetch_request(SockPid, Topic, Partition, Offset,
-                                       WaitTime, MinBytes, MaxBytes)
+      brod_kafka_request:fetch(SockPid, Topic, Partition, Offset,
+                               WaitTime, MinBytes, MaxBytes)
   end.
 
 %% @doc Fetch a message-set. If the given MaxBytes is not enough to fetch a
 %% single message, expand it to fetch exactly one message
-%% @end
 -spec fetch(pid(), req_fun(), offset(), kpro:count()) ->
                {ok, [brod:message()]} | {error, any()}.
 fetch(SockPid, ReqFun, Offset, MaxBytes) when is_pid(SockPid) ->
   Request = ReqFun(Offset, MaxBytes),
-  #kpro_rsp{ tag = fetch_response
-           , msg = Msg
-           } = request_sync(SockPid, Request, infinity),
-  [Response] = kf(responses, Msg),
-  [PartitionResponse] = kf(partition_responses, Response),
-  Header = kf(partition_header, PartitionResponse),
-  Messages0 = kf(record_set, PartitionResponse),
-  ErrorCode = kf(error_code, Header),
+  {ok, Response} = request_sync(SockPid, Request, infinity),
+  #{ error_code := ErrorCode
+   , batches := Batches
+   } = kpro:parse_response(Response),
   case ?IS_ERROR(ErrorCode) of
-    true ->
-      {error, kpro_error_code:desc(ErrorCode)};
-    false ->
-      case decode_messages(Offset, Messages0) of
-        ?incomplete_message(Size) ->
-          fetch(SockPid, ReqFun, Offset, Size);
-        Messages ->
-          {ok, Messages}
-      end
+    true -> {error, ErrorCode};
+    false -> {ok, flatten_batches(Offset, Batches)}
   end.
 
 %% @doc List all groups in the given cluster.
 %% NOTE: Exception if failed against any of the coordinator brokers.
-%% @end
 -spec list_all_groups([endpoint()], sock_opts()) ->
         [{endpoint(), [brod:cg()] | {error, any()}}].
 list_all_groups(Endpoints, Options) ->
@@ -397,7 +376,7 @@ list_groups(Endpoint, Options) ->
       Vsn = 0, %% only one version
       Body = [], %% this request has no struct field
       Request = kpro:req(list_groups_request, Vsn, Body),
-      #kpro_rsp{ tag = list_groups_response
+      #kpro_rsp{ api = list_groups
                , vsn = Vsn
                , msg = Msg
                } = request_sync(Pid, Request),
@@ -427,7 +406,7 @@ describe_groups(Coordinator, SockOpts, IDs) ->
     try_connect([Coordinator], SockOpts),
     fun(Pid) ->
         Req = kpro:req(describe_groups_request, 0, [{group_ids, IDs}]),
-        #kpro_rsp{ tag = describe_groups_response
+        #kpro_rsp{ api = describe_groups
                  , vsn = 0
                  , msg = Msg
                  } = request_sync(Pid, Req),
@@ -470,7 +449,7 @@ resolve_group_coordinator(BootstrapEndpoints, SockOpts, GroupId) ->
     try_connect(BootstrapEndpoints, SockOpts),
     fun(BootstrapSockPid) ->
         Req = kpro:req(group_coordinator_request, 0, [{group_id, GroupId}]),
-        #kpro_rsp{ tag = group_coordinator_response
+        #kpro_rsp{ api = find_coordinator
                  , vsn = 0
                  , msg = Struct
                  } = request_sync(BootstrapSockPid, Req),
@@ -563,10 +542,9 @@ try_connect([{Host, Port} | Hosts], Options, _) ->
     Error     -> try_connect(Hosts, Options, Error)
   end.
 
-%% @private A fetched batch may contain offsets earlier than the
+%% A fetched batch may contain offsets earlier than the
 %% requested begin-offset because the batch might be compressed on
 %% kafka side. Here we drop the leading messages.
-%% @end
 drop_old_messages(_BeginOffset, []) -> [];
 drop_old_messages(BeginOffset, [Message | Rest] = All) ->
   case Message#kafka_message.offset < BeginOffset of
@@ -590,13 +568,13 @@ do_find_leader_in_metadata(Msg, Topic, Partition) ->
   TopicEC = kf(topic_error_code, TopicMetadata),
   RealTopic = kf(topic, TopicMetadata),
   Partitions = kf(partition_metadata, TopicMetadata),
-  RealTopic /= Topic andalso erlang:throw(?EC_UNKNOWN_TOPIC_OR_PARTITION),
+  RealTopic /= Topic andalso erlang:throw(?unknown_topic_or_partition),
   ?IS_ERROR(TopicEC) andalso erlang:throw(TopicEC),
   Id = case find_struct(partition_id, Partition, Partitions) of
-         false -> erlang:throw(?EC_UNKNOWN_TOPIC_OR_PARTITION);
+         false -> erlang:throw(?unknown_topic_or_partition);
          PartitionMetadata -> kf(leader, PartitionMetadata)
        end,
-  Id >= 0 orelse erlang:throw(?EC_LEADER_NOT_AVAILABLE),
+  Id >= 0 orelse erlang:throw(?leader_not_available),
   Broker = find_struct(node_id, Id, Brokers),
   Host = kf(host, Broker),
   Port = kf(port, Broker),

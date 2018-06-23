@@ -36,7 +36,7 @@
         { topic      :: brod:topic()
         , partition  :: brod:partition()
         , error_code :: brod:error_code()
-        , error_desc :: binary()
+        , error_desc = ""
         }).
 
 -record(brod_call_ref, { caller :: pid()
