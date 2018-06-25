@@ -218,8 +218,7 @@ assert_topics(Topics) ->
 %% @doc Assert topic is a binary().
 -spec assert_topic(topic()) -> ok | no_return().
 assert_topic(Topic) ->
-  ok_when(is_binary(Topic) andalso size(Topic) > 0,
-          {bad_topic, Topic}).
+  ok_when(is_binary(Topic) andalso size(Topic) > 0, {bad_topic, Topic}).
 
 %% @doc Make a flat message list from decoded batch list.
 -spec flatten_batches(offset(), [kpro:batch()]) -> [kpro:message()].

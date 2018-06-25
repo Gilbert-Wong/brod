@@ -38,7 +38,7 @@ rel:: escript
 	@tar -pczf _rel/brod.tar.gz -C _rel brod
 
 test-env:
-	./scripts/setup-test-env.sh
+	./scripts/setup-test-env.sh 1.1
 
 t: eunit ct
 	./scripts/cover-summary.escript eunit.coverdata ct.coverdata
