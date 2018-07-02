@@ -187,7 +187,7 @@
 -type consumer_options() :: [{consumer_option(), integer()}].
 -type consumer_config() :: brod_consumer:config().
 -type connection() :: kpro:connection().
--type conn_config() :: kpro:conn_config().
+-type conn_config() :: [{atom(), term()}] | kpro:conn_config().
 
 %% consumer groups
 -type group_id() :: kpro:group_id().
@@ -298,7 +298,7 @@ start_client(BootstrapEndpoints, ClientId) ->
 %%     Timeout when trying to connect to an endpoint.
 %%
 %%   request_timeout (optional, default=240000, constraint: >= 1000)
-%%     Timeout when waiting for a response, socket restart when timed out.
+%%     Timeout when waiting for a response, connection restart when timed out.
 %%   query_api_versions (optional, default=true)
 %%     Must be set to false to work with kafka versions prior to 0.10,
 %%     When set to `true', at connection start, brod will send a query request
@@ -687,13 +687,13 @@ connect_leader(Hosts, Topic, Partition, ConnConfig) ->
 %% NOTE: Exception if failed to connect any of the coordinator brokers.
 -spec list_all_groups([endpoint()], conn_config()) ->
         [{endpoint(), [cg()] | {error, any()}}].
-list_all_groups(Endpoints, SockOpts) ->
-  brod_utils:list_all_groups(Endpoints, SockOpts).
+list_all_groups(Endpoints, ConnCfg) ->
+  brod_utils:list_all_groups(Endpoints, ConnCfg).
 
 %% @doc List consumer groups in the given group coordinator broker.
 -spec list_groups(endpoint(), conn_config()) -> {ok, [cg()]} | {error, any()}.
-list_groups(CoordinatorEndpoint, SockOpts) ->
-  brod_utils:list_groups(CoordinatorEndpoint, SockOpts).
+list_groups(CoordinatorEndpoint, ConnCfg) ->
+  brod_utils:list_groups(CoordinatorEndpoint, ConnCfg).
 
 %% @doc Describe consumer groups. The given consumer group IDs should be all
 %% managed by the coordinator-broker running at the given endpoint.
@@ -702,8 +702,8 @@ list_groups(CoordinatorEndpoint, SockOpts) ->
 %% See `kpro_schema.erl' for struct details
 -spec describe_groups(endpoint(), conn_config(), [group_id()]) ->
         {ok, [kpro:struct()]} | {error, any()}.
-describe_groups(CoordinatorEndpoint, SockOpts, IDs) ->
-  brod_utils:describe_groups(CoordinatorEndpoint, SockOpts, IDs).
+describe_groups(CoordinatorEndpoint, ConnCfg, IDs) ->
+  brod_utils:describe_groups(CoordinatorEndpoint, ConnCfg, IDs).
 
 %% @doc Connect to consumer group coordinator broker.
 %% Done in steps: 1) connect to any of the given bootstrap ednpoints;
@@ -711,17 +711,17 @@ describe_groups(CoordinatorEndpoint, SockOpts, IDs) ->
 %% 3) connect to the resolved endpoint and return the connection pid
 -spec connect_group_coordinator([endpoint()], conn_config(), group_id()) ->
         {ok, pid()} | {error, any()}.
-connect_group_coordinator(BootstrapEndpoints, SockOpts, GroupId) ->
+connect_group_coordinator(BootstrapEndpoints, ConnCfg, GroupId) ->
   Args = #{type => group, id => GroupId},
-  kpro:connect_coordinator(BootstrapEndpoints, SockOpts, Args).
+  kpro:connect_coordinator(BootstrapEndpoints, ConnCfg, Args).
 
 %% @doc Fetch committed offsets for ALL topics in the given consumer group.
 %% Return the `responses' field of the `offset_fetch' response.
 %% See `kpro_schema.erl' for struct details.
 -spec fetch_committed_offsets([endpoint()], conn_config(), group_id()) ->
         {ok, [kpro:struct()]} | {error, any()}.
-fetch_committed_offsets(BootstrapEndpoints, SockOpts, GroupId) ->
-  brod_utils:fetch_committed_offsets(BootstrapEndpoints, SockOpts, GroupId, []).
+fetch_committed_offsets(BootstrapEndpoints, ConnCfg, GroupId) ->
+  brod_utils:fetch_committed_offsets(BootstrapEndpoints, ConnCfg, GroupId, []).
 
 %% @doc Same as `fetch_committed_offsets/3',
 %% but works with a started `brod_client'

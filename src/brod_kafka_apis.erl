@@ -14,7 +14,7 @@
 %%%   limitations under the License.
 %%%
 
-%% Version ranges are cached per host and per brod_sock pid in ets
+%% Version ranges are cached per host and per connection pid in ets
 
 -module(brod_kafka_apis).
 
@@ -101,13 +101,15 @@ terminate(_Reason, _State) ->
 %%%_* Internals ================================================================
 
 -spec do_pick_version(conn(), api(), range()) -> vsn().
+do_pick_version(_Conn, _API, {V, V}) -> V;
 do_pick_version(Conn, API, {Min, Max} = MyRange) ->
   case lookup_vsn_range(Conn, API) of
     none ->
       Min; %% no version received from kafka, use min
-    {_, Vsn} = Range ->
-      Vsn < Min andalso error({unsupported_vsn_range, API, MyRange, Range}),
-      min(Vsn, Max) %% try to use highest version
+    {KproMin, KproMax} = Range when KproMin > Max orelse KproMax < Min ->
+      erlang:error({unsupported_vsn_range, API, MyRange, Range});
+    {_, KproMax} ->
+      min(KproMax, Max) %% try to use highest version
   end.
 
 %% Lookup API from cache, return 'none' if not found.
@@ -116,7 +118,7 @@ lookup_vsn_range(Conn, API) ->
   case ets:lookup(?ETS, Conn) of
     [] ->
       case kpro:get_api_versions(Conn) of
-        {ok, Versions} ->
+        {ok, Versions} when is_map(Versions) ->
           %% public ets, insert it by caller
           ets:insert(?ETS, {Conn, Versions}),
           %% tell ?SERVER to monitor the connection
@@ -124,8 +126,7 @@ lookup_vsn_range(Conn, API) ->
           ok = monitor_connection(Conn),
           maps:get(API, Versions, none);
         {error, _Reason} ->
-          %% connection died, ignore
-          none
+          none %% connection died, ignore
       end;
     [{Conn, Vsns}] ->
       maps:get(API, Vsns, none)

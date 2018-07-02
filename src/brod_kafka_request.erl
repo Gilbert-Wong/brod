@@ -1,5 +1,5 @@
 %%%
-%%%   Copyright (c) 2017 Klarna AB
+%%%   Copyright (c) 2017-2018 Klarna Bank AB (publ)
 %%%
 %%%   Licensed under the Apache License, Version 2.0 (the "License");
 %%%   you may not use this file except in compliance with the License.
@@ -18,10 +18,11 @@
 -module(brod_kafka_request).
 
 -export([ fetch/7
-        , metadata/2
+        , list_groups/1
         , list_offsets/4
-        , produce/7
+        , metadata/2
         , offset_fetch/3
+        , produce/7
         ]).
 
 -include("brod_int.hrl").
@@ -35,7 +36,7 @@
 
 %% @doc Make a produce request, If the first arg is a connection pid, call
 %% `brod_kafka_apis:pick_version/2' to resolve version.
--spec produce(pid() | vsn(), topic(), partition(),
+-spec produce(conn() | vsn(), topic(), partition(),
               brod:kv_list(), integer(), integer(),
               brod:compression()) -> kpro:req().
 produce(MaybePid, Topic, Partition, KvList,
@@ -49,7 +50,7 @@ produce(MaybePid, Topic, Partition, KvList,
 
 %% @doc Make a fetch request, If the first arg is a connection pid, call
 %% `brod_kafka_apis:pick_version/2' to resolve version.
--spec fetch(pid(), topic(), partition(), offset(),
+-spec fetch(conn(), topic(), partition(), offset(),
             kpro:wait(), kpro:count(), kpro:count()) -> kpro:req().
 fetch(Pid, Topic, Partition, Offset,
       WaitTime, MinBytes, MaxBytes) ->
@@ -74,7 +75,7 @@ list_offsets(Connection, Topic, Partition, TimeOrSemanticOffset) ->
   kpro_req_lib:list_offsets(Vsn, Topic, Partition, Time).
 
 %% @doc Make a metadata request.
--spec metadata(pid(), ?undef | all | [topic()]) -> kpro:req().
+-spec metadata(conn(), ?undef | all | [topic()]) -> kpro:req().
 metadata(Connection, Topics) when is_pid(Connection) ->
   Vsn = brod_kafka_apis:pick_version(Connection, metadata),
   metadata(Vsn, Topics);
@@ -85,7 +86,7 @@ metadata(Vsn, Topics) ->
 
 %% @doc Make a offset fetch request.
 %% NOTE: empty topics list only works for kafka 0.10.2.0 or later
--spec offset_fetch(pid(), brod:group_id(), Topics) -> kpro:req()
+-spec offset_fetch(conn(), brod:group_id(), Topics) -> kpro:req()
         when Topics :: [{topic(), [partition()]}].
 offset_fetch(Connection, GroupId, Topics0) ->
   Topics =
@@ -103,6 +104,14 @@ offset_fetch(Connection, GroupId, Topics0) ->
          ],
   Vsn = pick_version(offset_fetch, Connection),
   kpro:make_request(offset_fetch, Vsn, Body).
+
+%% @doc Make a list_groups request.
+-spec list_groups(conn()) -> kpro:req().
+list_groups(Connection) ->
+  Vsn = pick_version(list_groups, Connection),
+  kpro:make_request(list_groups, Vsn, []).
+
+%%%_* Internal Functions =======================================================
 
 -spec pick_version(api(), pid()) -> vsn().
 pick_version(_API, Vsn) when is_integer(Vsn) -> Vsn;

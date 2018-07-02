@@ -345,19 +345,17 @@ handle_fetch_response(#kpro_rsp{ref = Ref} = Rsp,
                             , last_req_ref = Ref
                             } = State0) ->
   State = State0#state{last_req_ref = ?undef},
-  #{ error_code := ErrorCode
-   , header := Header
-   , batches := Batches
-   } = kpro:parse_response(Rsp),
-  case ?IS_ERROR(ErrorCode) of
-    true ->
+  case brod_utils:parse_rsp(Rsp) of
+    {ok, #{ header := Header
+          , batches := Batches
+          }} ->
+      handle_batches(Header, Batches, State);
+    {error, ErrorCode} ->
       Error = #kafka_fetch_error{ topic      = Topic
                                 , partition  = Partition
                                 , error_code = ErrorCode
                                 },
-      handle_fetch_error(Error, State);
-    false ->
-      handle_batches(Header, Batches, State)
+      handle_fetch_error(Error, State)
   end.
 
 handle_batches(?undef, [], #state{begin_offset = LastOffset} = State0) ->

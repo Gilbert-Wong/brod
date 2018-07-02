@@ -237,9 +237,9 @@ init({ClientPid, Topic, Partition, Config}) ->
   SendFun =
     fun(Conn, KafkaKvList, Vsn) ->
         ProduceRequest =
-          kpro:produce_request(Vsn, Topic, Partition, KafkaKvList,
-                               RequiredAcks, AckTimeout,
-                               MaybeCompress(KafkaKvList)),
+          brod_kafka_request:produce(Vsn, Topic, Partition, KafkaKvList,
+                                     RequiredAcks, AckTimeout,
+                                     MaybeCompress(KafkaKvList)),
         case send(Conn, ProduceRequest) of
           ok when ProduceRequest#kpro_req.no_ack ->
             ok;
@@ -389,7 +389,7 @@ maybe_reinit_connection(#state{ client_pid = ClientPid
       ConnMref = erlang:monitor(process, Connection),
       %% Make sure the sent but not acked ones are put back to buffer
       {ok, Buffer} = brod_producer_buffer:nack_all(Buffer0, new_leader),
-      ReqVersion = brod_kafka_apis:pick_version(Connection, produce_request),
+      ReqVersion = brod_kafka_apis:pick_version(Connection, produce),
       {ok, State#state{ connection      = Connection
                       , conn_mref       = ConnMref
                       , buffer          = Buffer

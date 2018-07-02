@@ -872,13 +872,14 @@ format_broker_lines(Brokers) ->
           Id = kf(node_id, Broker),
           Host = kf(host, Broker),
           Port = kf(port, Broker),
-          Rack = kf(rack, Broker, ?undef),
+          Rack = kf(rack, Broker, <<>>),
           HostStr = fmt_endpoint({Host, Port}),
           format_broker_line(Id, Rack, HostStr)
       end,
   [Header, lists:map(F, Brokers)].
 
-format_broker_line(Id, ?undef, Endpoint) ->
+format_broker_line(Id, Rack, Endpoint)
+ when Rack =:= ?kpro_null orelse Rack =:= <<>> ->
   io_lib:format("  ~p: ~s\n", [Id, Endpoint]);
 format_broker_line(Id, Rack, Endpoint) ->
   io_lib:format("  ~p(~s): ~s\n", [Id, Rack, Endpoint]).
@@ -946,23 +947,17 @@ format_topics(Topics) ->
   lists:keysort(1, TL).
 
 format_topic(Topic) ->
-  ErrorCode = kf(topic_error_code, Topic),
   TopicName = kf(topic, Topic),
   PL = kf(partition_metadata, Topic),
-  Data =
-    case ?IS_ERROR(ErrorCode) of
-      true  -> ErrorCode;
-      false -> format_partitions(PL)
-    end,
-  {TopicName, Data}.
+  {TopicName, format_partitions(PL)}.
 
 format_partitions(Partitions) ->
   PL = lists:map(fun format_partition/1, Partitions),
   lists:keysort(1, PL).
 
 format_partition(P) ->
-  ErrorCode = kf(partition_error_code, P),
-  PartitionNr = kf(partition_id, P),
+  ErrorCode = kf(error_code, P),
+  PartitionNr = kf(partition, P),
   LeaderNodeId = kf(leader, P),
   Replicas = kf(replicas, P),
   Isr = kf(isr, P),
@@ -975,7 +970,7 @@ format_partition(P) ->
 
 %% Return true if a topics is under-replicated
 is_ur_topic(Topic) ->
-  ErrorCode = kf(topic_error_code, Topic),
+  ErrorCode = kf(error_code, Topic),
   Partitions = kf(partition_metadata, Topic),
   %% when there is an error, we do not know if
   %% it is under-replicated or not
@@ -984,7 +979,7 @@ is_ur_topic(Topic) ->
 
 %% Return true if a partition is under-replicated
 is_ur_partition(Partition) ->
-  ErrorCode = kf(partition_error_code, Partition),
+  ErrorCode = kf(error_code, Partition),
   Replicas = kf(replicas, Partition),
   Isr = kf(isr, Partition),
   ?IS_ERROR(ErrorCode) orelse lists:sort(Isr) =/= lists:sort(Replicas).
